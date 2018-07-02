@@ -33,18 +33,21 @@ class RedisConnector:
         self._redis = redis.StrictRedis(host=host, port=port)
         self.pub_sub = self._redis.pubsub()
 
-        if not isinstance(channels, (list, tuple)):
+        if isinstance(channels, (list, tuple)):
+            for channel in channels:
+                if not isinstance(channel, str):
+                    raise RedisConnectorWrongConfiguration(WRONG_CONFIG_CHANNEL_NAME_SHOULD_BE_STR)
+        else:
             raise RedisConnectorWrongConfiguration(WRONG_CONFIG_CHANNELS_SHOULD_BE_LIST_TUPLE)
+
+        self.service_name = service_name
+        self.ping_channel = 'ping:{}'.format(self.service_name)
+        channels.append(self.ping_channel)
 
         for channel in channels:
             if not isinstance(channel, str):
                 raise RedisConnectorWrongConfiguration(WRONG_CONFIG_CHANNEL_NAME_SHOULD_BE_STR)
             self.pub_sub.subscribe(channel)
-
-        self.service_name = service_name
-        self.ping_channel = 'ping:{}'.format(self.service_name)
-        self.channels = channels
-        self.channels.append(self.ping_channel)
 
     def __enter__(self):
         """Implement with statement."""
@@ -59,7 +62,7 @@ class RedisConnector:
 
     def ping(channel, self):
         """Will ping to the channel, to see how many consumers connected."""
-        return self.publish(channel, 'ping')
+        return self.publish(channel, {'target': None, 'message': 'ping'})
 
     def publish(self, channel, message):
         """Will publish the message to the channel you are subscribed to.
@@ -69,10 +72,14 @@ class RedisConnector:
 
         :rtype: None
         """
-        return self._redis.publish(channel, message)
+        return self._redis.publish(channel, json.dumps(message))
 
-    def subscribe(self):
+    def subscribe(self, exec_function):
         """Subscribes to the redis queue.
+
+        :param exec_function:
+            function that will be executed when the message arrives with the data extracted as only arg
+        :type exec_function: executable
 
         :rtype: None
         """
@@ -81,15 +88,19 @@ class RedisConnector:
             data = message['data']
             if message['type'] == 'message':
                 data = json.loads(data.decode('utf8').replace("'", '"'))
-                # No target means promiscuous mode for that message, no lock will be used
-                target = data.pop('target')
-                if target is None:
-                    self._process(data)
-                elif target == self.service_name:
-                    if data['message'] == 'ping':
-                        pass
-                    elif self._acquire_lock(data['message_id']):
-                        self._process(data)
+
+                # ping messages will be ignored, redis will simply return with the number of subscribers on
+                # that channel
+                if data.get('message') == 'ping':
+                    pass
+                else:
+                    # No target means promiscuous mode for that message, no lock will be used
+                    target = data.pop('target', None)
+                    if target is None:
+                        exec_function(data)
+                    elif target == self.service_name:
+                        if self._acquire_lock(data['message_id']):
+                            exec_function(data)
 
     def _acquire_lock(self, message_id, lock_timeout=10):
         """Will lock the redis key for a max of 10 seconds,
@@ -112,6 +123,3 @@ class RedisConnector:
 
             time.sleep(0.001)
         return False
-
-    def _process(self, message):
-        raise NotImplementedError('"_process method" should be implemented in inherited classes')
