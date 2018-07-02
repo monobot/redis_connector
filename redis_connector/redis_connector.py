@@ -86,17 +86,22 @@ class RedisConnector:
                 if target is None:
                     self._process(data)
                 elif target == self.service_name:
-                    if self._acquire_lock(data['message_id']):
+                    if data['message'] == 'ping':
+                        pass
+                    elif self._acquire_lock(data['message_id']):
                         self._process(data)
 
     def _acquire_lock(self, message_id, lock_timeout=10):
         """Will lock the redis key for a max of 10 seconds,
-        if the lock is free then it will process the message inmediatly, leaving it locked for the lock_timeout in all
-        the cases, thus not allowing to process the messege to any other service.
+        if the lock is free then it will process the message inmediatly, leaving it locked for the
+        lock_timeout in all the cases, thus not allowing to process the messege to any other service.
+
+        :param lock_timeout: Time in seconds the lock will be set before release
+        :type lock_timeout: int
 
         :rtype: bool
         """
-        expire_time = time.time() + (lock_timeout / 2)
+        expire_time = time.time() + (lock_timeout * 2 / 3)
         while time.time() < expire_time:
             if self._redis.setnx(message_id, expire_time):
                 self._redis.expire(message_id, lock_timeout)
