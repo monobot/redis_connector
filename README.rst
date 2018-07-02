@@ -26,7 +26,15 @@ Redis pub/sub connector
 Features
 --------
 
-* TODO
+* Microservices will be able to process each of them their own messages, because of the redis lock feature each message is waranteed been processed 1 time max.
+* you can also send promiscuous messages if you like them better
+* sending ping messages to the different microservices allows you to know how many instances for each microservice are consuming the messages.
+
+Todo
+----
+
+* add tests
+* logg feeback when the message has not been processed by any consumer.
 
 Credits
 -------
